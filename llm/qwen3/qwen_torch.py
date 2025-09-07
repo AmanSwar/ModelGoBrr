@@ -12,7 +12,7 @@ def compute_rope_params(
 ):
     assert head_dim % 2 == 0 , "head dim must be divisible by 2"
 
-    inv_freq = 1 / (theta_base ** (torch.arange(0 , head_dim  , 2 , dtype=dtype)[: head_dim//2]/float() / head_dim))
+    inv_freq = 1 / (theta_base ** (torch.arange(0 , head_dim  , 2 , dtype=dtype)[: head_dim//2].float() / head_dim))
 
     position = torch.arange(context_length , dtype=dtype)
     angles = position[: , None] * inv_freq[None, :]
@@ -57,18 +57,19 @@ class GQA(nn.Module):
         self,
         d_in : int,
         num_heads : int, 
-        num_kv_grps : int,
+        n_kv_heads : int,
         head_dim : int | None = None,
         qk_norm : bool = True,
         dtype = None
     ):
         super().__init__()
 
-        assert num_heads % num_kv_grps == 0 , "Num heads is not divisible by num kv grps"
+        assert num_heads % n_kv_heads == 0 , "Num heads is not divisible by num kv grps"
 
         self.num_heads = num_heads
-        self.num_kv_grps = num_kv_grps
-        self.grp_size = num_heads // num_kv_grps
+        self.n_kv_heads = n_kv_heads
+        # self.grp_size = num_heads // num_kv_grps
+        self.num_kv_grps = num_heads // n_kv_heads
 
         if head_dim is None:
             assert d_in % num_heads == 0 , "in dimension must be divisible by number of heads"
@@ -78,8 +79,8 @@ class GQA(nn.Module):
         self.d_out = self.head_dim * self.num_heads
 
         self.Wq = nn.Linear(in_features=d_in , out_features= self.d_out , bias=False , dtype=dtype)
-        self.Wk = nn.Linear(in_features=d_in , out_features= self.num_kv_grps * self.head_dim , bias=False , dtype=dtype)
-        self.Wv = nn.Linear(in_features=d_in , out_features= self.num_kv_grps * self.head_dim , bias=False , dtype=dtype)
+        self.Wk = nn.Linear(in_features=d_in , out_features= self.n_kv_heads * self.head_dim , bias=False , dtype=dtype)
+        self.Wv = nn.Linear(in_features=d_in , out_features= self.n_kv_heads * self.head_dim , bias=False , dtype=dtype)
 
         self.out_projection = nn.Linear(in_features=self.d_out , out_features=d_in , bias=False,dtype=dtype)
 
@@ -99,8 +100,8 @@ class GQA(nn.Module):
         V : torch.Tensor = self.Wv(x)
 
         Q = Q.view(bs , seq_len , self.num_heads ,self.head_dim).transpose(1,2)
-        K = K.view(bs , seq_len , self.num_kv_grps ,self.head_dim).transpose(1,2)
-        V = V.view(bs , seq_len , self.num_kv_grps ,self.head_dim).transpose(1,2)
+        K = K.view(bs , seq_len , self.n_kv_heads ,self.head_dim).transpose(1,2)
+        V = V.view(bs , seq_len , self.n_kv_heads ,self.head_dim).transpose(1,2)
 
         if self.q_norm:
             Q = self.q_norm(Q)
@@ -111,8 +112,8 @@ class GQA(nn.Module):
         Q = apply_rope(Q ,cos , sin)
         K = apply_rope(K , cos , sin)
 
-        K = K.repeat_interleave(self.grp_size , dim=1)
-        V = V.repeat_interleave(self.grp_size , dim=1)
+        K = K.repeat_interleave(self.num_kv_grps , dim=1)
+        V = V.repeat_interleave(self.num_kv_grps , dim=1)
 
         scores = Q @ K.transpose(2,3)
         scores = scores.masked_fill(mask , -torch.inf).to(x.dtype)
@@ -156,7 +157,7 @@ class Transformer(nn.Module):
             d_in = cfg.embed_dim,
             num_heads= cfg.n_heads,
             head_dim=cfg.head_dim,
-            num_kv_grps=cfg.n_kv_grps,
+            n_kv_heads=cfg.n_kv_heads,
             qk_norm=cfg.qk_norm,
             dtype=cfg.dtype
         )
