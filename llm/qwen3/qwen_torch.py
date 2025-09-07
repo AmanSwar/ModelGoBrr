@@ -142,7 +142,7 @@ class FFN(nn.Module):
         x = self.silu(x_l)
         x = x * x_p
         x = self.linear_layer2(x)
-
+        return x
 
 
 class Transformer(nn.Module):
