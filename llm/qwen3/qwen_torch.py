@@ -93,7 +93,6 @@ class GQA(nn.Module):
     def forward(self , x , mask , cos , sin):
 
         bs , seq_len , _ = x.shape
-        print(x.dtype)
         
         Q : torch.Tensor = self.Wq(x)
         K : torch.Tensor = self.Wk(x)
