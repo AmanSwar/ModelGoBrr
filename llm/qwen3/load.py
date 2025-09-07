@@ -11,7 +11,7 @@ def load_weights(
     
     def assign(left , right , tensor_name="unknown"):
         if left.shape != right.shape:
-            raise ValueError(f"Shape mismatch {tensor_name} | left : {left} | right : {right}") 
+            raise ValueError(f"Shape mismatch -> {tensor_name} | left : {left.shape} | right : {right.shape}") 
 
         return torch.nn.Parameter(right.clone().detach() if isinstance(right , torch.Tensor) else torch.tensor(right))
     
@@ -47,20 +47,20 @@ def load_weights(
 
         # QK norms
         if hasattr(attn, "q_norm") and attn.q_norm is not None:
-            attn.q_norm.scale = assign(
-                attn.q_norm.scale,
+            attn.q_norm.weight = assign(
+                attn.q_norm.weight,
                 params[f"model.layers.{l}.self_attn.q_norm.weight"],
                 f"model.layers.{l}.self_attn.q_norm.weight"
             )
         if hasattr(attn, "k_norm") and attn.k_norm is not None:
-            attn.k_norm.scale = assign(
-                attn.k_norm.scale,
+            attn.k_norm.weight = assign(
+                attn.k_norm.weight,
                 params[f"model.layers.{l}.self_attn.k_norm.weight"],
                 f"model.layers.{l}.self_attn.k_norm.weight"
             )
 
-        block.rms_norm1.scale = assign(
-            block.rms_norm1.scale,
+        block.rms_norm1.weight = assign(
+            block.rms_norm1.weight,
             params[f"model.layers.{l}.input_layernorm.weight"],
             f"model.layers.{l}.input_layernorm.weight"
         )
@@ -81,13 +81,13 @@ def load_weights(
             f"model.layers.{l}.mlp.down_proj.weight"
         )
 
-        block.rms_norm2.scale = assign(
-            block.rms_norm2.scale,
+        block.rms_norm2.weight = assign(
+            block.rms_norm2.weight,
             params[f"model.layers.{l}.post_attention_layernorm.weight"],
             f"model.layers.{l}.post_attention_layernorm.weight"
         )
 
-    model.final_rmsnorm.scale = assign(model.final_rmsnorm.scale, params["model.norm.weight"], "model.norm.weight")
+    model.final_rmsnorm.weight = assign(model.final_rmsnorm.weight, params["model.norm.weight"], "model.norm.weight")
 
     if "lm_head.weight" in params:
         model.out_head.weight = assign(model.out_head.weight, params["lm_head.weight"], "lm_head.weight")
