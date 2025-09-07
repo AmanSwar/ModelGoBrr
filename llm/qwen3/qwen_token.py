@@ -94,5 +94,21 @@ class Qwen3Tokenizer:
     def decode(self,  ids):
 
         return self.tok.decode(ids , skip_special_tokens=False)
-    
-    
+
+
+if __name__ == "__main__":
+    tokenizer_file_path = "/home/aman/code/model_go_brr/llm/Qwen3-0.6B/tokenizer.json"
+
+    tokenizer = Qwen3Tokenizer(
+        tokenizer_file_path=tokenizer_file_path,
+        add_gen_prompt=True,
+        add_thinking=True,
+    )
+
+    prompt = "How many 'r' is in 'Strawberry'"
+
+    input_token_ids = tokenizer.encode(prompt)
+    text = tokenizer.decode(input_token_ids)
+    print(text)
+
+    print(input_token_ids)
