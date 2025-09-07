@@ -79,7 +79,7 @@ class GQA(nn.Module):
 
         self.Wq = nn.Linear(in_features=d_in , out_features= self.d_out , bias=False , dtype=dtype)
         self.Wk = nn.Linear(in_features=d_in , out_features= self.num_kv_grps * self.head_dim , bias=False , dtype=dtype)
-        self.Wv = nn.Linear(in_features=d_in , out_features= self.d_out , bias=False , dtype=dtype)
+        self.Wv = nn.Linear(in_features=d_in , out_features= self.num_kv_grps * self.head_dim , bias=False , dtype=dtype)
 
         self.out_projection = nn.Linear(in_features=self.d_out , out_features=d_in , bias=False,dtype=dtype)
 
@@ -93,6 +93,7 @@ class GQA(nn.Module):
     def forward(self , x , mask , cos , sin):
 
         bs , seq_len , _ = x.shape
+        print(x.dtype)
         
         Q : torch.Tensor = self.Wq(x)
         K : torch.Tensor = self.Wk(x)
@@ -115,7 +116,8 @@ class GQA(nn.Module):
         V = V.repeat_interleave(self.grp_size , dim=1)
 
         scores = Q @ K.transpose(2,3)
-        scores = scores.masked_fill(mask , -torch.inf)
+        scores = scores.masked_fill(mask , -torch.inf).to(x.dtype)
+
         scores = torch.softmax(scores / (self.head_dim**0.5) , dim=-1)
         
         attn_out = (scores @ V).transpose(1,2).reshape(bs , seq_len , self.d_out)
@@ -135,9 +137,9 @@ class FFN(nn.Module):
         self.linear_layer2 =  nn.Linear(in_features=hidden_dim , out_features=in_dim , bias=False)
 
     def forward(self, x):
-        x = self.linear_layer1(x)
+        x_l = self.linear_layer1(x)
         x_p = self.linear_layerP(x)
-        x = self.silu(x)
+        x = self.silu(x_l)
         x = x * x_p
         x = self.linear_layer2(x)
 
@@ -168,6 +170,8 @@ class Transformer(nn.Module):
     def forward(self , x , mask , cos , sin):
         x_res = x
         x = self.rms_norm1(x)
+        x = x.to(torch.bfloat16)
+        assert x.dtype == torch.bfloat16 , "input not in bfloat16"
         x = self.attn(x , mask , cos , sin)
 
         x = x + x_res
@@ -223,6 +227,7 @@ class Qwen3(nn.Module):
 
         mask = torch.triu(torch.ones(num_tokens , num_tokens , device=token_embed.device , dtype=torch.bool) ,diagonal=1)
 
+        assert x.dtype == torch.bfloat16 , "input not in bfloat16"
         for block in self.transformer_blocs:
             x = block(x , mask , self.cos , self.sin)
 
