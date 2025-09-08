@@ -161,7 +161,7 @@ class RMSNormTritonFunction(Function):
     
 
 def _rmsnorm(x , weight , eps=1e-6):
-    return RMSNormTriton.apply(x  ,weight , eps)
+    return RMSNormTritonFunction.apply(x  ,weight , eps)
 
 
 class RMSNormTriton(torch.nn.Module):
