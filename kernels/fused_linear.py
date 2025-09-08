@@ -4,16 +4,7 @@ import triton.language as tl
 import torch
 from .matmul import matmul_block
 
-
-@triton.jit
-def relu(x):
-    return tl.where(x > 0, x, 0)
-
-
-@triton.jit
-def silu(x):
-    return x * tl.sigmoid(x)
-
+from .activations import silu , relu
 
 @triton.jit
 def fused_linear_kernel(
@@ -231,4 +222,3 @@ if __name__ == "__main__":
 
 
     benchmark_linear_layers.run(show_plots=True)
-    
