@@ -1,7 +1,11 @@
+from typing import Any
 import triton
 import triton.language as tl
 
 import torch
+from torch.autograd import Function
+
+from .config_tool import tuner
 
 @triton.jit
 def _rmsnorm_fwd(
@@ -34,14 +38,14 @@ def _rmsnorm_fwd(
     output_ptrs = output_matrix + row_start + cols_offset
     tl.store(output_ptrs , out_row , mask=mask)
 
-
+@triton.jit
 def _rmsnorm_bwd(
     input_matrix,
     weight_matrix,
     grad_matrix,
     grad_x_matrix,
     grad_w_acc_matrix,
-    M , N , grad_matrix_stride,
+    M , N ,
     eps,
     BLOCKS_SIZE : tl.constexpr,
 ):
@@ -84,4 +88,92 @@ def _rmsnorm_bwd(
     tl.store(grad_x_ptrs , grad_x , mask=mask)
 
 
+class RMSNormTritonFunction(Function):
+
+    @staticmethod
+    def forward(ctx , x : torch.Tensor , weight , eps=1e-6):
+        assert x.is_contiguous(), "Input must be contiguous"
+        assert weight.is_contiguous(), "Weight must be contiguous"
+        assert x.shape[-1] == weight.shape[0], "Feature dimension mismatch"
+
+        # get all dims
+        *batch_dims, N = x.shape
+
+        M = x.numel() // N
+
+        x_2d_view = x.view(M , N)
+        y = torch.empty_like(x_2d_view)
+
+        BLOCK_SIZE , num_warps = tuner(N)
+        grid = (M,)
+
+        _rmsnorm_fwd[grid](
+            input_matrix=x_2d_view,
+            output_matrix=y,
+            weight_matrix=weight,
+            M=M,
+            N=N,
+            eps=eps,
+            BLOCK_SIZE=BLOCK_SIZE,
+            num_warps=num_warps
+        )
+
+        ctx.save_for_backward(x_2d_view , weight)
+        ctx.eps = eps
+        ctx.N = N
+        ctx.original_shape = x.shape
+
+        return y.view(x.shape)
+
+    @staticmethod
+    def backward(ctx, grad_outputs):
+
+        x_2d_view , weight = ctx.saved_tensors
+        eps = ctx.eps
+        N = ctx.N
+        original_shape = ctx.original_shape
+
+        grad_outputs = grad_outputs.contiguous().view(x_2d_view.shape)
+
+        M = x_2d_view.shape[0]
+
+        grad_x = torch.zeros_like(x_2d_view)
+        grad_weight = torch.zeros_like(weight)
+
+        grid = (M,)
+        BLOCK_SIZE , num_warps = tuner(N)
+
+        _rmsnorm_bwd[grid](
+            input_matrix=x_2d_view,
+            weight_matrix=weight,
+            grad_matrix=grad_outputs,
+            grad_x_matrix=grad_x,
+            grad_w_acc_matrix=grad_weight,
+            M=M,
+            N=N,
+            eps=eps,
+            BLOCKS_SIZE= BLOCK_SIZE,
+            num_warps=num_warps
+        )
+
+
+        return grad_x , grad_weight
+    
+
+def _rmsnorm(x , weight , eps=1e-6):
+    return RMSNormTriton.apply(x  ,weight , eps)
+
+
+class RMSNormTriton(torch.nn.Module):
+
+    def __init__(self , embed_dim , eps=1e-6):
+
+        super().__init__()
+
+        self.weight = torch.nn.Parameter(torch.ones(embed_dim))
+        self.eps = eps
+
+    def forward(self,  x):
+        return _rmsnorm(x , self.weight , self.eps)
+    
 
