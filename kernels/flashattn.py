@@ -4,7 +4,6 @@ import triton
 import triton.language as tl
 
 
-
 @triton.jit
 def _attn_fwd_inner(
     O_block,
@@ -307,5 +306,116 @@ def launch_attn(
     return O
 
 
-    
+def pytorch_attention(q, k, v, causal, softmax_scale):
+    """
+    Standard PyTorch implementation of scaled dot-product attention
+    for verification.
+    """
+    # (B, H, S, D) x (B, H, D, S) -> (B, H, S, S)
+    S = (q @ k.transpose(-2, -1)) * softmax_scale
+    if causal:
+        # Create a causal mask
+        mask = torch.triu(
+            torch.ones(S.shape[-2], S.shape[-1], device=q.device), diagonal=1
+        )
+        S = S.masked_fill(mask.bool(), float("-inf"))
 
+    # Apply softmax to get attention weights
+    P = torch.softmax(S, dim=-1)
+
+    # (B, H, S, S) x (B, H, S, D) -> (B, H, S, D)
+    return P @ v
+
+
+def run_benchmark_and_verify():
+    """
+    Main function to run verification and benchmarks.
+    """
+    # Test configurations
+    BATCH, N_HEADS, SEQ_LEN, D_HEAD = 4, 16, 1024, 64
+    softmax_scale = 1.0 / (D_HEAD**0.5)
+
+    # Generate random tensors
+    q = torch.randn(
+        (BATCH, N_HEADS, SEQ_LEN, D_HEAD),
+        dtype=torch.float16,
+        device="cuda",
+        requires_grad=False,
+    )
+    k = torch.randn(
+        (BATCH, N_HEADS, SEQ_LEN, D_HEAD),
+        dtype=torch.float16,
+        device="cuda",
+        requires_grad=False,
+    )
+    v = torch.randn(
+        (BATCH, N_HEADS, SEQ_LEN, D_HEAD),
+        dtype=torch.float16,
+        device="cuda",
+        requires_grad=False,
+    )
+
+    print("--- Verification ---")
+    # --- Test non-causal attention ---
+    triton_output_non_causal = launch_attn(
+        q, k, v, causal=False, softmax_scale=softmax_scale
+    )
+    pytorch_output_non_causal = pytorch_attention(
+        q, k, v, causal=False, softmax_scale=softmax_scale
+    )
+
+    is_correct_non_causal = torch.allclose(
+        triton_output_non_causal, pytorch_output_non_causal, atol=1e-2, rtol=0
+    )
+    print(f"Non-Causal Attention Correct: {is_correct_non_causal}")
+
+    # --- Test causal attention ---
+    triton_output_causal = launch_attn(
+        q, k, v, causal=True, softmax_scale=softmax_scale
+    )
+    pytorch_output_causal = pytorch_attention(
+        q, k, v, causal=True, softmax_scale=softmax_scale
+    )
+
+    is_correct_causal = torch.allclose(
+        triton_output_causal, pytorch_output_causal, atol=1e-2, rtol=0
+    )
+    print(f"Causal Attention Correct: {is_correct_causal}")
+
+    print("\n--- Benchmark (ms) ---")
+
+    # Use triton.testing.do_bench for accurate measurements
+    quantiles = [0.2, 0.5, 0.8]
+
+    # Benchmark non-causal
+    ms_triton_non_causal, _, _ = triton.testing.do_bench(
+        lambda: launch_attn(q, k, v, causal=False, softmax_scale=softmax_scale),
+        quantiles=quantiles,
+    )
+    ms_pytorch_non_causal, _, _ = triton.testing.do_bench(
+        lambda: pytorch_attention(q, k, v, causal=False, softmax_scale=softmax_scale),
+        quantiles=quantiles,
+    )
+
+    # Benchmark causal
+    ms_triton_causal, _, _ = triton.testing.do_bench(
+        lambda: launch_attn(q, k, v, causal=True, softmax_scale=softmax_scale),
+        quantiles=quantiles,
+    )
+    ms_pytorch_causal, _, _ = triton.testing.do_bench(
+        lambda: pytorch_attention(q, k, v, causal=True, softmax_scale=softmax_scale),
+        quantiles=quantiles,
+    )
+
+    print(f"{'Mode':<20} | {'Triton':<10} | {'PyTorch':<10}")
+    print("-" * 45)
+    print(
+        f"{'Non-Causal Attention':<20} | {ms_triton_non_causal:10.3f} | {ms_pytorch_non_causal:10.3f}"
+    )
+    print(
+        f"{'Causal Attention':<20} | {ms_triton_causal:10.3f} | {ms_pytorch_causal:10.3f}"
+    )
+
+
+if __name__ == "__main__":
+    run_benchmark_and_verify()
