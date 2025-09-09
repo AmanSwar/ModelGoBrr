@@ -208,7 +208,7 @@ if __name__ == "__main__":
             )
         if provider == "triton":
             ms, min_ms, max_ms = triton.testing.do_bench(
-                lambda: matmul(a, b), quantiles=quantiles
+                lambda: triton_matmul(a, b), quantiles=quantiles
             )
         perf = lambda ms: 2 * M * N * K * 1e-12 / (ms * 1e-3)
         return perf(ms), perf(max_ms), perf(min_ms)
