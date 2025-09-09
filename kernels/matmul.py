@@ -69,9 +69,9 @@ def get_cuda_autotune_config():
 
 @triton.jit
 def matmul_block(
-    matrixA, 
-    matrixB, 
-    M, N, K, 
+    matrixA, #matrixA
+    matrixB, #matrixB
+    K, #the commond dimension
     stride_am, stride_ak,  # strides of A
     stride_bk, stride_bn,  # strides of B
     offs_am,  # row offsets for this block -> shape (BLOCK_M,)
@@ -124,8 +124,6 @@ def matmul_kernel(
     acc = matmul_block(
         matrixA,
         matrixB,
-        M,
-        N,
         K,
         stride_am,
         stride_ak,
@@ -151,7 +149,7 @@ def matmul_kernel(
     tl.store(c_ptrs, c, mask=c_mask)
 
 
-def matmul(a, b, activation=""):
+def triton_matmul(a, b, activation=""):
     assert a.shape[1] == b.shape[0], "Incompatible dimensions"
     assert a.is_contiguous(), "Matrix A must be contiguous"
     M, K = a.shape
