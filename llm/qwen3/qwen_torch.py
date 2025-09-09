@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from qwen3.config import QwenConfig
+from llm.qwen3.config import QwenConfig
 
 
 def compute_rope_params(
@@ -25,7 +25,6 @@ def compute_rope_params(
     return cos , sin
 
 
-
 def apply_rope(
         x : torch.Tensor, 
         cos : torch.Tensor, 
@@ -45,9 +44,6 @@ def apply_rope(
     x_rotated = (x * cos) + (rotated * sin)
 
     return x_rotated.to(dtype=x.dtype)
-
-
-
 
 
 class GQA(nn.Module):
@@ -123,7 +119,6 @@ class GQA(nn.Module):
         attn_out = (scores @ V).transpose(1,2).reshape(bs , seq_len , self.d_out)
 
         return self.out_projection(attn_out)
-    
 
 
 class FFN(nn.Module):
@@ -146,7 +141,10 @@ class FFN(nn.Module):
 
 
 class Transformer(nn.Module):
-    
+    """
+    RMS -> attn -> rms -> ffnaaa
+    """
+
     def __init__(
         self,
         cfg : QwenConfig
@@ -164,10 +162,11 @@ class Transformer(nn.Module):
 
         self.rms_norm1 = nn.RMSNorm(cfg.embed_dim ,eps=1e-6)
         self.rms_norm2 = nn.RMSNorm(cfg.embed_dim ,eps=1e-6)
-        
+
         self.ffn = FFN(cfg.embed_dim , cfg.hidden_dim)
 
     def forward(self , x , mask , cos , sin):
+        # print(x.shape)
         x_res = x
         x = self.rms_norm1(x)
         x = x.to(torch.bfloat16)
@@ -178,11 +177,11 @@ class Transformer(nn.Module):
 
         x_res = x
         x = self.rms_norm2(x)
+        # print(x.shape)
         x = self.ffn(x)
         x = x + x_res
 
         return x
-    
 
 
 class Qwen3(nn.Module):
@@ -227,14 +226,62 @@ class Qwen3(nn.Module):
 
         mask = torch.triu(torch.ones(num_tokens , num_tokens , device=token_embed.device , dtype=torch.bool) ,diagonal=1)
 
-        assert x.dtype == torch.bfloat16 , "input not in bfloat16"
+        # assert x.dtype == torch.bfloat16 , "input not in bfloat16"
+        # x = x.to(torch.bfloat16)
         for block in self.transformer_blocs:
             x = block(x , mask , self.cos , self.sin)
 
         x = self.final_rmsnorm(x)
 
-        logits = self.out_head(x.to(self.cfg.dtype))
+        logits = self.out_head(x.to(torch.bfloat16))
         return logits
-    
 
-    
+if __name__ == "__main__":
+
+    from llm.qwen3.qwen_token import Qwen3Tokenizer
+    import time
+    from llm.qwen3.load import load_weights_qwen
+    import os
+    from llm.qwen3.hf_load import load_file
+    repo_dir = "/home/aman/code/model_go_brr/Qwen3-0.6B"
+    torch.manual_seed(696969)
+    device = torch.device("cuda")
+    single_file_path = os.path.join(repo_dir, "model.safetensors")
+
+    weights_dict = load_file(single_file_path)
+    config = QwenConfig()
+    model = Qwen3(config).to(device)
+    load_weights_qwen(model , config , weights_dict)
+    tokenizer_file_path = "/home/aman/code/model_go_brr/Qwen3-0.6B/tokenizer.json"
+
+    tokenizer = Qwen3Tokenizer(
+        tokenizer_file_path=tokenizer_file_path,
+        add_gen_prompt=True,
+        add_thinking=True,
+    )
+    model = model.to(device)
+
+    PROMPT = "Write a concise, friendly summary of why distributed training matters for large models.\n"
+
+    def generate(model, tokenizer, prompt, max_new_tokens=128):
+        tokens = tokenizer.encode(prompt)
+        tokens = (
+            torch.tensor(tokens).unsqueeze(0).to(device)
+        )  # unsequeze to include the batch dimension
+
+        start_pos = tokens.shape[1]
+        total_len = start_pos + max_new_tokens
+        st = time.monotonic()
+        for _ in range(max_new_tokens):
+            with torch.no_grad():
+                logits = model(tokens)
+                print(f"Pass {_}")
+
+            next_token = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(0)
+            tokens = torch.cat((tokens, next_token), dim=1)
+        et = time.monotonic() - st
+        print(f"End time", et)
+        decoded = tokenizer.decode(tokens.squeeze(0).tolist())
+        return decoded
+
+    _ = generate(model, tokenizer, PROMPT, max_new_tokens=128)
