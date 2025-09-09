@@ -211,7 +211,7 @@ if __name__ == "__main__":
         K_copy = K.clone()
 
         # Triton implementation
-        kernel_out_q, kernel_out_k = fast_rope_embedding(Q, K, cos, sin)
+        kernel_out_q, kernel_out_k = rope_embedding_triton(Q, K, cos, sin)
 
         # Reference implementation
         q_out = apply_rope_reference(Q_copy, cos, sin)
@@ -271,7 +271,7 @@ if __name__ == "__main__":
         if provider == "triton":
 
             def fn():
-                return fast_rope_embedding(Q, K, cos, sin)
+                return rope_embedding_triton(Q, K, cos, sin)
 
         else:  # torch
 
@@ -335,7 +335,7 @@ if __name__ == "__main__":
         if provider == "triton":
 
             def fn():
-                return fast_rope_embedding(Q, K, cos, sin)
+                return rope_embedding_triton(Q, K, cos, sin)
 
         else:  # torch
 
