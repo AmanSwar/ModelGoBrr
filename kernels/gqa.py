@@ -85,7 +85,7 @@ class GQA_Triton(nn.Module):
         self.softmax_scale = 1 / (self.head_dim **0.5)
 
     def forward(
-        self, x, mask, cos, sin
+        self, x, cos, sin
     ): 
         bs, seq_len, _ = x.shape
         Q: torch.Tensor = self.Wq(x)
@@ -352,13 +352,13 @@ if __name__ == "__main__":
     @triton.testing.perf_report([
         triton.testing.Benchmark(
             x_names=['SEQ_LEN'],
-            x_vals=[128, 256, 512, 1024],
+            x_vals=[128, 256, 512, 1024 , 2048],
             line_arg='provider',
             line_vals=['pytorch', 'triton'],
             line_names=['PyTorch', 'Triton'],
             styles=[('blue', '-'), ('green', '-')],
             ylabel='GFLOPS',  # <-- CHANGED from 'ms'
-            plot_name='gqa-performance-gflops-bf16',  # <-- CHANGED plot name
+            plot_name='Grouped Query Attention Perf Mixed Precision',  # <-- CHANGED plot name
             args={'D_HEAD': 64, 'BATCH': 2, 'N_HEADS': 32, 'N_KV_HEADS': 8, 'DTYPE': torch.float16}
         )
     ])
