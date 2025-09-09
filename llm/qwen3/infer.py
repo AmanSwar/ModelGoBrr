@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 
-from qwen3.qwen_torch import Qwen3
-from qwen3.config import QwenConfig
-from utils import model_mem_size
-from qwen3.load import load_weights
-from qwen3.qwen_token import Qwen3Tokenizer
+# from qwen3.qwen_torch import Qwen3
+from llm.qwen3.qwen_optim import FastQwen3
+from llm.qwen3.config import QwenConfig
+from llm.utils import model_mem_size
+from llm.qwen3.load import load_weights_fastqwen
+from llm.qwen3.qwen_token import Qwen3Tokenizer
 
 
 from pathlib import Path
@@ -15,28 +16,31 @@ from safetensors.torch import load_file
 import time
 
 
-
 torch.manual_seed(696969)
 device = torch.device("cuda")
 
 
 config = QwenConfig()
-model = Qwen3(config).to(device)
+# model = Qwen3(config).to(device)
+model = FastQwen3(config , device)
+model = torch.compile(model)
 
 # checking the model
 # print(model(torch.tensor([1,2,3]).unsqueeze(0).to(device=device)))
 
-print(f"float32 (PyTorch default): {model_mem_size(model, input_dtype=torch.float32):.2f} GB")
-print(f"bfloat16: {model_mem_size(model, input_dtype=torch.bfloat16):.2f} GB")
+# print(f"float32 (PyTorch default): {model_mem_size(model, input_dtype=torch.float32):.2f} GB")
+# print(f"float16: {model_mem_size(model, input_dtype=torch.float16):.2f} GB")
 
-repo_dir = "/home/aman/code/model_go_brr/llm/Qwen3-0.6B"
+repo_dir = "/home/aman/code/model_go_brr/Qwen3-0.6B"
 single_file_path = os.path.join(repo_dir, "model.safetensors")
 weights_dict = load_file(single_file_path)
-load_weights(model, config, weights_dict)
+
+load_weights_fastqwen(model, config, weights_dict)
+
 model.to(device)
 print("Model loaded successfully!")
 
-tokenizer_file_path = "/home/aman/code/model_go_brr/llm/Qwen3-0.6B/tokenizer.json"
+tokenizer_file_path = "/home/aman/code/model_go_brr/Qwen3-0.6B/tokenizer.json"
 
 tokenizer = Qwen3Tokenizer(
     tokenizer_file_path=tokenizer_file_path,
@@ -48,7 +52,7 @@ PROMPT = "Write a concise, friendly summary of why distributed training matters 
 
 def generate(model, tokenizer, prompt, max_new_tokens=128):
     tokens = tokenizer.encode(prompt)
-    tokens = torch.tensor(tokens).unsqueeze(0).to(device)
+    tokens = torch.tensor(tokens).unsqueeze(0).to(device) #unsequeze to include the batch dimension
     
     start_pos = tokens.shape[1]
     total_len = start_pos + max_new_tokens
