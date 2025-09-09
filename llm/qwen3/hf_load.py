@@ -4,20 +4,23 @@ from pathlib import Path
 from safetensors.torch import load_file
 from huggingface_hub import snapshot_download
 
-from qwen3.qwen_torch import Qwen3
-from qwen3.config import QwenConfig
-from qwen3.load import load_weights
+from llm.qwen3.qwen_torch import Qwen3
+from llm.qwen3.config import QwenConfig
+from llm.qwen3.load import load_weights_fastqwen
+from llm.qwen3.qwen_optim import FastQwen3
 
+import torch
 repo_id = "Qwen/Qwen3-0.6B"
 local_dir = Path(repo_id).parts[-1]
 
 repo_dir = snapshot_download(repo_id=repo_id, local_dir=local_dir)
-
+device = torch.device("cuda")
 if __name__ == "__main__":
     import torch
 
     config = QwenConfig()
-    model = Qwen3(config)
+    # model = Qwen3(config)
+    model = FastQwen3(config , device=device)
     device = torch.device('cuda')
     
     # Check if model is sharded or single file
@@ -62,7 +65,7 @@ if __name__ == "__main__":
     print(f"Expected embed_dim: {config.embed_dim}")
     print(f"Expected n_heads: {config.n_heads}")
     print(f"Expected n_kv_grps: {config.n_kv_heads}")
-    load_weights(model, config, weights_dict)
+    load_weights_fastqwen(model, config, weights_dict)
     model.to(device)
 
     print("Model loaded successfully!")
