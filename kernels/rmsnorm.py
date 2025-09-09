@@ -92,8 +92,8 @@ class RMSNormTritonFunction(Function):
 
     @staticmethod
     def forward(ctx , x : torch.Tensor , weight , eps=1e-6):
-        assert x.is_contiguous(), "Input must be contiguous"
-        assert weight.is_contiguous(), "Weight must be contiguous"
+        # assert x.is_contiguous(), "Input must be contiguous"
+        # assert weight.is_contiguous(), "Weight must be contiguous"
         assert x.shape[-1] == weight.shape[0], "Feature dimension mismatch"
 
         # get all dims
@@ -101,7 +101,7 @@ class RMSNormTritonFunction(Function):
 
         M = x.numel() // N
 
-        x_2d_view = x.view(M , N)
+        x_2d_view = x.reshape(M , N)
         y = torch.empty_like(x_2d_view)
 
         BLOCK_SIZE , num_warps = tuner(N)
@@ -160,7 +160,7 @@ class RMSNormTritonFunction(Function):
         return grad_x , grad_weight
 
 
-def _rmsnorm(x , weight , eps=1e-6):
+def rmsnorm_triton(x , weight , eps=1e-6):
     return RMSNormTritonFunction.apply(x  ,weight , eps)
 
 
@@ -174,7 +174,7 @@ class RMSNormTriton(torch.nn.Module):
         self.eps = eps
 
     def forward(self,  x):
-        return _rmsnorm(x , self.weight.to(device=x.device) , self.eps)
+        return rmsnorm_triton(x, self.weight.to(device=x.device), self.eps)
 
 
 if __name__ == "__main__":
