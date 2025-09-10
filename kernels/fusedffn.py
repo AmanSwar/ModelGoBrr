@@ -7,69 +7,79 @@ from .matmul import matmul_block, triton_matmul
 from .activations import silu
 
 
-def get_cuda_autotune_config():
-    return [
-        triton.Config(
-            {
-                "BLOCK_SIZE_N": 128,
-                "BLOCK_SIZE_HID": 256,
-                "BLOCK_SIZE_EMB": 64,
-            },
-            num_stages=3,
-            num_warps=8,
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_N": 64,
-                "BLOCK_SIZE_HID": 256,
-                "BLOCK_SIZE_EMB": 32,
-            },
-            num_stages=4,
-            num_warps=4,
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_N": 128,
-                "BLOCK_SIZE_HID": 128,
-                "BLOCK_SIZE_EMB": 32,
-            },
-            num_stages=4,
-            num_warps=4,
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_N": 64,
-                "BLOCK_SIZE_HID": 128,
-                "BLOCK_SIZE_EMB": 32,
-            },
-            num_stages=4,
-            num_warps=4,
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_N": 128,
-                "BLOCK_SIZE_HID": 32,
-                "BLOCK_SIZE_EMB": 32,
-            },
-            num_stages=4,
-            num_warps=4,
-        ),
-        triton.Config(
-            {
-                "BLOCK_SIZE_N": 64,
-                "BLOCK_SIZE_HID": 32,
-                "BLOCK_SIZE_EMB": 32,
-            },
-            num_stages=5,
-            num_warps=2,
-        ),
-    ]
+# def get_cuda_autotune_config():
+#     return [
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE_N": 128,
+#                 "BLOCK_SIZE_HID": 256,
+#                 "BLOCK_SIZE_EMB": 64,
+#             },
+#             num_stages=3,
+#             num_warps=8,
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE_N": 64,
+#                 "BLOCK_SIZE_HID": 256,
+#                 "BLOCK_SIZE_EMB": 32,
+#             },
+#             num_stages=4,
+#             num_warps=4,
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE_N": 128,
+#                 "BLOCK_SIZE_HID": 128,
+#                 "BLOCK_SIZE_EMB": 32,
+#             },
+#             num_stages=4,
+#             num_warps=4,
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE_N": 64,
+#                 "BLOCK_SIZE_HID": 128,
+#                 "BLOCK_SIZE_EMB": 32,
+#             },
+#             num_stages=4,
+#             num_warps=4,
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE_N": 128,
+#                 "BLOCK_SIZE_HID": 32,
+#                 "BLOCK_SIZE_EMB": 32,
+#             },
+#             num_stages=4,
+#             num_warps=4,
+#         ),
+#         triton.Config(
+#             {
+#                 "BLOCK_SIZE_N": 64,
+#                 "BLOCK_SIZE_HID": 32,
+#                 "BLOCK_SIZE_EMB": 32,
+#             },
+#             num_stages=5,
+#             num_warps=2,
+#         ),
+#     ]
 
 
-@triton.autotune(
-    configs=get_cuda_autotune_config(),
-    key=["N", "EMBED_DIM", "HIDDEN_DIM"],
-)
+# @triton.autotune(
+#     configs=get_cuda_autotune_config(),
+#     key=["N", "EMBED_DIM", "HIDDEN_DIM"],
+# )
+
+"""
+Best setting
+BLOCK_SIZE_N: 64, 
+BLOCK_SIZE_HID: 128, 
+BLOCK_SIZE_EMB: 32, 
+num_warps: 4, 
+num_ctas: 1, 
+num_stages: 4,
+"""
 @triton.jit
 def _subffn_silu_fwd_kernel(
     X,
@@ -155,6 +165,13 @@ def ffn_silu_fwd_triton(
         triton.cdiv(N, CONFIG["BLOCK_SIZE_N"]),
         triton.cdiv(HIDDEN_DIM, CONFIG["BLOCK_SIZE_HID"]),
     )
+    BLOCK_SIZE_N= 64
+    BLOCK_SIZE_HID= 128 
+    BLOCK_SIZE_EMB= 32 
+    num_warps= 4 
+    num_ctas= 1 
+    num_stages= 4
+
 
     _subffn_silu_fwd_kernel[grid](
         X=input_matrix,
@@ -172,6 +189,12 @@ def ffn_silu_fwd_triton(
         stride_w2_hid=weight2_matrix.stride(1),
         stride_y_n=intermediate_matrix.stride(0),
         stride_y_hid=intermediate_matrix.stride(1),
+        BLOCK_SIZE_N=BLOCK_SIZE_N,
+        BLOCK_SIZE_EMB=BLOCK_SIZE_EMB,
+        BLOCK_SIZE_HID=BLOCK_SIZE_HID,
+        num_warps=num_warps,
+        num_ctas=num_ctas,
+        num_stages=num_stages
     )
 
     output_matrix = triton_matmul(intermediate_matrix, weight3_matrix)
