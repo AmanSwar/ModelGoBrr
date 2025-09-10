@@ -95,104 +95,36 @@ def _rmsnorm_fwd(
         tl.store(output_ptrs , out_row , mask=mask)
 
 
-# @triton.jit
-# def _rmsnorm_bwd(
-#     input_matrix,
-#     weight_matrix,
-#     grad_matrix,
-#     grad_x_matrix,
-#     grad_w_acc_matrix,
-#     M , N ,
-#     eps,
-#     BLOCKS_SIZE : tl.constexpr,
-# ):
-
-#     #base indexing
-#     row_index = tl.program_id(0)
-#     cols_offset = tl.arange(0,BLOCKS_SIZE)
-
-#     #ptrs for all
-#     input_ptrs = input_matrix + row_index * N + cols_offset
-#     grad_ptrs = grad_matrix + row_index * N + cols_offset
-#     weight_ptrs = weight_matrix + cols_offset
-
-#     grad_w_ptrs = grad_w_acc_matrix + row_index * N + cols_offset
-#     grad_x_ptrs = grad_x_matrix + row_index * N + cols_offset
-
-#     mask = cols_offset < N
-
-#     #load
-#     input_row = tl.load(input_ptrs , mask=mask , other=0.0)
-#     grad_row = tl.load(grad_ptrs , mask=mask , other=0.0)
-#     weight = tl.load(weight_ptrs , mask=mask  ,other=0.0)
-
-
-#     #recompute RMS
-#     _rms = tl.sqrt((tl.sum(input_row * input_row) / N) +eps)
-
-
-#     grad_weight_partial = (input_row / _rms) * grad_row
-
-#     tl.store(grad_w_ptrs,grad_weight_partial,mask=mask)
-
-#     _first_term = (grad_row/ _rms) * weight
-
-#     _second_term_num = tl.sum(input_row * weight * grad_row)
-#     _second_term_denom = N + _rms * _rms * _rms
-
-#     grad_x = _first_term - (_second_term_num / _second_term_denom)
-
-#     tl.store(grad_x_ptrs , grad_x , mask=mask)
-
-
-class _RMSNormTritonFunction(Function):
-
-    @staticmethod
-    def forward(ctx , x : torch.Tensor , weight , eps=1e-6):
-        # assert x.is_contiguous(), "Input must be contiguous"
-        # assert weight.is_contiguous(), "Weight must be contiguous"
-        assert x.shape[-1] == weight.shape[0], "Feature dimension mismatch"
-
-        # get all dims
-        *batch_dims, N = x.shape
-
-        M = x.numel() // N
-
-        x_2d_view = x.reshape(M , N)
-        y = torch.empty_like(x_2d_view)
-
-        grid = (M,)
-        BLOCK_SIZE = 256
-        num_warps= 2
-        num_ctas= 1
-        num_stages= 4
-        _rmsnorm_fwd[grid](
-            input_matrix=x_2d_view,
-            output_matrix=y,
-            weight_matrix=weight,
-            M=M,
-            N=N,
-            eps=eps,
-            BLOCK_SIZE=BLOCK_SIZE,
-            num_warps=num_warps,
-            num_ctas=num_ctas,
-            num_stages=num_stages
-        )
-
-        ctx.save_for_backward(x_2d_view , weight)
-        ctx.eps = eps
-        ctx.N = N
-        ctx.original_shape = x.shape
-
-        return y.view(x.shape)
-
-    @staticmethod
-    def backward(ctx, grad_outputs):
-        raise NotImplementedError
-
 
 def rmsnorm_triton(x , weight , eps=1e-6):
-    return _RMSNormTritonFunction.apply(x  ,weight , eps)
+    assert x.shape[-1] == weight.shape[0], "Feature dimension mismatch"
+
+    # get all dims
+    *batch_dims, N = x.shape
+
+    M = x.numel() // N
+
+    x_2d_view = x.reshape(M , N)
+    y = torch.empty_like(x_2d_view)
+
+    grid = (M,)
+    BLOCK_SIZE = 256
+    num_warps= 2
+    num_ctas= 1
+    num_stages= 4
+    _rmsnorm_fwd[grid](
+        input_matrix=x_2d_view,
+        output_matrix=y,
+        weight_matrix=weight,
+        M=M,
+        N=N,
+        eps=eps,
+        BLOCK_SIZE=BLOCK_SIZE,
+        num_warps=num_warps,
+        num_ctas=num_ctas,
+        num_stages=num_stages
+    )
+    return y.view(x.shape)
 
 
 class RMSNormTriton(torch.nn.Module):
