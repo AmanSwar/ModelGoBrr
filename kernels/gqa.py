@@ -88,6 +88,7 @@ class GQA_Triton(nn.Module):
         self, x, cos, sin
     ): 
         bs, seq_len, _ = x.shape
+        x = x.to(torch.float16)
         Q: torch.Tensor = self.Wq(x)
         K: torch.Tensor = self.Wk(x)
         V: torch.Tensor = self.Wv(x)
@@ -104,9 +105,9 @@ class GQA_Triton(nn.Module):
 
         if self.k_norm:
             K = self.k_norm(K)
-        Q = Q.contiguous()
-        K = K.contiguous()
-        V = V.contiguous()
+        # Q = Q.contiguous()
+        # K = K.contiguous()
+        # V = V.contiguous()
         cos = cos.to(torch.float32)
         sin = sin.to(torch.float32)
 
@@ -310,7 +311,7 @@ if __name__ == "__main__":
         # 4. Run forward passes
         with torch.no_grad():
             output_pytorch = pytorch_model(x, mask, cos, sin)
-            output_triton = triton_model(x, mask, cos, sin)
+            output_triton = triton_model(x, cos, sin)
 
         # 5. Compare outputs
         try:
@@ -387,7 +388,7 @@ if __name__ == "__main__":
         if provider == 'pytorch':
             ms, min_ms, max_ms = triton.testing.do_bench(lambda: pytorch_model(x, mask, cos, sin), quantiles=quantiles)
         elif provider == 'triton':
-            ms, min_ms, max_ms = triton.testing.do_bench(lambda: triton_model(x, mask, cos, sin), quantiles=quantiles)
+            ms, min_ms, max_ms = triton.testing.do_bench(lambda: triton_model(x, cos, sin), quantiles=quantiles)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
