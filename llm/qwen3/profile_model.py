@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from llm.qwen3.qwen_torch import Qwen3
-from llm.qwen3.qwen_optim import FastQwen3
+from llm.qwen3.qwen_fast import FastQwen3
 from llm.qwen3.config import QwenConfig
 
 from llm.qwen3.load import load_weights_fastqwen , load_weights_qwen
@@ -20,14 +20,14 @@ torch.manual_seed(696969)
 device = torch.device("cuda")
 
 config = QwenConfig()
-# model : FastQwen3 = FastQwen3(config ,device=device)
-model = Qwen3(config)
+model : FastQwen3 = FastQwen3(config ,device=device)
+# model = Qwen3(config)
 
 repo_dir = "/home/aman/code/model_go_brr/Qwen3-0.6B"
 single_file_path = os.path.join(repo_dir, "model.safetensors")
 weights_dict = load_file(single_file_path)
-# load_weights_fastqwen(model, config, weights_dict)
-load_weights_qwen(model, config, weights_dict)
+load_weights_fastqwen(model, config, weights_dict)
+# load_weights_qwen(model, config, weights_dict)
 model.to(device)
 print("Model loaded successfully!")
 
@@ -78,7 +78,7 @@ if __name__ == "__main__":
 
         # Export after context manager closes
         print("saving")
-        prof.export_chrome_trace("profile_trace_qwen.json")
+        prof.export_chrome_trace("llm/qwen3/profiles/profile_trace_fast_qwen3.json")
         print("Profiling complete. Chrome trace saved to profile_trace.json")
 
     except Exception as e:
