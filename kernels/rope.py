@@ -2,14 +2,27 @@ import triton
 import triton.language as tl
 import torch
 
-from .config_tool import tuner
-
-"""
-RoPE implementation from Unsloth AI github
-"""
 
 ROPE_GROUP_SIZE: int = 4
 
+
+# @triton.autotune(
+#     configs=[
+#         triton.Config({"BLOCK_SIZE": 16}, num_warps=2),
+#         triton.Config({"BLOCK_SIZE": 32}, num_warps=2),
+#         triton.Config({"BLOCK_SIZE": 64}, num_warps=4),
+#         triton.Config({"BLOCK_SIZE": 128}, num_warps=4),
+#         triton.Config({"BLOCK_SIZE": 256}, num_warps=8),
+#         triton.Config({"BLOCK_SIZE": 512}, num_warps=8),
+#         triton.Config({"BLOCK_SIZE": 1024}, num_warps=8),
+#     ],
+#     key=["head_dim"],
+# )
+
+"""
+best config
+BLOCK_SIZE: 128, num_warps: 4, num_ctas: 1, num_stages: 2
+"""
 
 @triton.jit
 def _rope_embedding(
@@ -29,11 +42,18 @@ def _rope_embedding(
     RoPE is Q * cos + rotate_half(Q) * sin
     """
     ROPE_GROUP_SIZE = 4
+
     row_position = tl.program_id(0)
     group_head_position = tl.program_id(1)
+
     col_offsets = tl.arange(0, BLOCK_SIZE)
-    half_head_dim = head_dim // 2
+
+    half_head_dim: tl.constexpr = head_dim // 2
+
+    tl.static_assert(BLOCK_SIZE >= half_head_dim, "BLOCK_SIZE must be >= head_dim // 2")
+    
     mask = col_offsets < half_head_dim
+
 
     sin1 = tl.load(
         sin
@@ -53,9 +73,11 @@ def _rope_embedding(
     )
 
     head_start = group_head_position * ROPE_GROUP_SIZE
+
     head_end = min((head_start + ROPE_GROUP_SIZE), n_heads)
 
     for k in range(head_start, head_end):
+
         offs_q1 = row_position * Q_row_stride + k * head_dim + col_offsets
         offs_q2 = (
             row_position * Q_row_stride + k * head_dim + col_offsets + half_head_dim
@@ -68,98 +90,73 @@ def _rope_embedding(
         tl.store(Q + offs_q2, Q2 * cos1 + Q1 * sin1, mask=mask)
 
 
-class RoPE_Triton(torch.autograd.Function):
-    
-    @staticmethod
-    def forward(ctx, Q, cos, sin):
-        cos, sin = cos.squeeze(), sin.squeeze()
-        batch: int
-        seq_len: int
-        n_heads: int
-        head_dim: int
-        batch, seq_len, n_heads, head_dim = Q.shape
-
-        ctx.save_for_backward(cos, sin)
-        ctx.shape = (batch, seq_len, n_heads, head_dim)
-
-        Q = Q.reshape(batch * seq_len, n_heads * head_dim)
-        n_rows: int
-        n_cols: int
-        n_rows, n_cols = Q.shape
-        assert seq_len <= cos.shape[0]
-
-        BLOCK_SIZE, num_warps = tuner(head_dim // 2)
-
-        div: int
-        mod: int
-        div, mod = divmod(n_heads, ROPE_GROUP_SIZE)
-        n_groups: int = div + (mod != 0)
-
-        _rope_embedding[
-            (
-                n_rows,
-                n_groups,
-            )
-        ](
-            Q,
-            Q.stride(0),
-            cos,
-            cos.stride(0),
-            sin,
-            sin.stride(0),
-            seq_len,
-            head_dim,
-            n_heads,
-            BLOCK_SIZE=BLOCK_SIZE,
-            num_warps=num_warps,
-        )
-
-        ctx.BLOCK_SIZE = BLOCK_SIZE
-        ctx.num_warps = num_warps
-        ctx.n_groups = n_groups
-        return Q.view(batch, seq_len, n_heads, head_dim)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        cos, sin = ctx.saved_tensors
-        batch, seq_len, n_heads, head_dim = ctx.shape
-
-        grad_output = grad_output.contiguous().view(batch * seq_len, n_heads * head_dim)
-        n_rows, n_cols = grad_output.shape
-
-        _rope_embedding[
-            (
-                n_rows,
-                ctx.n_groups,
-            )
-        ](
-            grad_output,
-            grad_output.stride(0),
-            cos,
-            cos.stride(0),
-            -sin,  # negative sign for the backward pass
-            sin.stride(0),
-            seq_len,
-            head_dim,
-            n_heads,
-            BLOCK_SIZE=ctx.BLOCK_SIZE,
-            num_warps=ctx.num_warps,
-        )
-
-        grad_Q = grad_output.reshape(batch, seq_len, n_heads, head_dim)
-        return grad_Q, None, None
-
-
-@torch.compiler.disable
 def rope_embedding_triton(Q, K, cos, sin):
-    Q = RoPE_Triton.apply(Q.transpose(1, 2), cos, sin).transpose(1, 2)
-    K = RoPE_Triton.apply(K.transpose(1, 2), cos, sin).transpose(1, 2)
+    Q = Q.transpose(1, 2).contiguous()  # (batch, seq_len, n_heads, head_dim)
+    K = K.transpose(1, 2).contiguous()  # (batch, seq_len, n_heads, head_dim)
+
+    cos, sin = cos.squeeze(), sin.squeeze()
+
+    batch, seq_len, n_heads, head_dim = Q.shape
+    batch , seq_len , n_heads_k , head_dim_k = K.shape
+
+    Q = Q.reshape(batch * seq_len, n_heads * head_dim)
+    K = K.reshape(batch * seq_len, n_heads_k * head_dim_k)
+
+    n_rows = batch * seq_len
+
+    assert seq_len <= cos.shape[0]
+
+    div, mod = divmod(n_heads, ROPE_GROUP_SIZE)
+    n_groups = div + (1 if mod else 0)
+
+
+    BLOCK_SIZE = 128
+    num_warps = 4
+    num_ctas = 1
+    num_stages = 2
+
+    _rope_embedding[(n_rows, n_groups)](
+        Q,
+        Q.stride(0),
+        cos,
+        cos.stride(0),
+        sin,
+        sin.stride(0),
+        seq_len,
+        head_dim,
+        n_heads,
+        BLOCK_SIZE=BLOCK_SIZE,
+        num_warps=num_warps,
+        num_ctas=num_ctas,
+        num_stages=num_stages,
+    )
+
+    # Launch kernel for K
+    _rope_embedding[(n_rows, n_groups)](
+        K,
+        K.stride(0),
+        cos,
+        cos.stride(0),
+        sin,
+        sin.stride(0),
+        seq_len,
+        head_dim_k,
+        n_heads_k,
+        BLOCK_SIZE=BLOCK_SIZE,
+        num_warps=num_warps,
+        num_ctas=num_ctas,
+        num_stages=num_stages,
+    )
+
+    Q = Q.view(batch, seq_len, n_heads, head_dim).transpose(1, 2)
+    K = K.view(batch, seq_len, n_heads_k, head_dim_k).transpose(1, 2)
     torch.cuda.current_stream(Q.device).synchronize()
     return Q, K
 
 
 if __name__ == "__main__":
     import time
+
     print("Testing RoPE Embedding Implementation")
     print("=" * 50)
 
@@ -172,7 +169,10 @@ if __name__ == "__main__":
         """
         inv_freq = 1.0 / (
             theta_base
-            ** (torch.arange(0, head_dim, 2, dtype=torch.float32, device=device) / head_dim)
+            ** (
+                torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+                / head_dim
+            )
         )
 
         pos = torch.arange(context_length, dtype=torch.float32, device=device)
@@ -250,8 +250,12 @@ if __name__ == "__main__":
         dtype = torch.float16
 
         # Create test tensors
-        Q = torch.randn(batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype)
-        K = torch.randn(batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype)
+        Q = torch.randn(
+            batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype
+        )
+        K = torch.randn(
+            batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype
+        )
 
         # Create RoPE parameters
         cos, sin = create_rope_params(head_dim, 10000.0, seq_len, device)
@@ -316,18 +320,15 @@ if __name__ == "__main__":
         device = "cuda"
         dtype = torch.float16
 
-        # Create test tensors
-        Q = torch.randn(batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype)
-        K = torch.randn(batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype)
+        Q = torch.randn(
+            batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype
+        )
+        K = torch.randn(
+            batch_size, n_heads, seq_len, head_dim, device=device, dtype=dtype
+        )
 
-        # Create RoPE parameters
         cos, sin = create_rope_params(head_dim, 10000.0, seq_len, device)
 
-        # Calculate FLOP count for RoPE
-        # For each element in Q and K:
-        # - 2 multiplications (with cos and sin)
-        # - 2 additions/subtractions
-        # Total: 4 FLOPs per element
         elements_per_tensor = batch_size * n_heads * seq_len * head_dim
         total_flops = 2 * elements_per_tensor * 4  # 2 tensors (Q, K) * 4 FLOPs each
         total_tflops = total_flops / (10**12)
