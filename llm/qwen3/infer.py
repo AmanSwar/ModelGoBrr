@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 # from qwen3.qwen_torch import Qwen3
-from llm.qwen3.qwen_optim import FastQwen3
+from llm.qwen3.qwen_fast import FastQwen3
 from llm.qwen3.config import QwenConfig
 from llm.utils import model_mem_size
 from llm.qwen3.load import load_weights_fastqwen

@@ -7,7 +7,7 @@ from huggingface_hub import snapshot_download
 from llm.qwen3.qwen_torch import Qwen3
 from llm.qwen3.config import QwenConfig
 from llm.qwen3.load import load_weights_fastqwen
-from llm.qwen3.qwen_optim import FastQwen3
+from llm.qwen3.qwen_fast import FastQwen3
 
 import torch
 repo_id = "Qwen/Qwen3-0.6B"
