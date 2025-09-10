@@ -80,20 +80,28 @@ def _attn_fwd_inner(
     return O_block, l_i, m_i
 
 
-@triton.autotune(
-    [
-        triton.Config(
-            {"BLOCK_SIZE_Q": BLOCK_SIZE_Q, "BLOCK_SIZE_KV": BLOCK_SIZE_KV},
-            num_stages=num_stages,
-            num_warps=num_warps,
-        )
-        for BLOCK_SIZE_Q in [64, 128]
-        for BLOCK_SIZE_KV in [32, 64]
-        for num_stages in ([3, 4, 7])
-        for num_warps in [2, 4]
-    ],
-    key=["SEQ_LEN", "HEAD_DIM"],
-)
+# @triton.autotune(
+#     [
+#         triton.Config(
+#             {"BLOCK_SIZE_Q": BLOCK_SIZE_Q, "BLOCK_SIZE_KV": BLOCK_SIZE_KV},
+#             num_stages=num_stages,
+#             num_warps=num_warps,
+#         )
+#         for BLOCK_SIZE_Q in [64, 128]
+#         for BLOCK_SIZE_KV in [32, 64]
+#         for num_stages in ([3, 4, 7])
+#         for num_warps in [2, 4]
+#     ],
+#     key=["SEQ_LEN", "HEAD_DIM"],
+# )
+"""
+BEST CONFIG:
+BLOCK_SIZE_Q : 128
+BLOCK_SIZE_KV: 64
+num_warps: 4
+num_ctas: 1
+num_stages: 3
+"""
 @triton.jit
 def _attn_fwd(
     Q,  # BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_DIM
@@ -272,7 +280,11 @@ def launch_attn(
     M = torch.empty(
         (BATCH_SIZE, NUM_HEADS, SEQ_LEN), device=Q.device, dtype=torch.float32
     )
-
+    BLOCK_SIZE_Q =128
+    BLOCK_SIZE_KV= 64
+    num_warps= 4
+    num_ctas= 1
+    num_stages= 3
     _attn_fwd[grid](
         Q=Q,
         K=K,
@@ -301,6 +313,11 @@ def launch_attn(
         SEQ_LEN=Q.shape[2],
         HEAD_DIM=HEAD_DIM_K,
         STAGE=stage,
+        BLOCK_SIZE_Q=BLOCK_SIZE_Q,
+        BLOCK_SIZE_KV=BLOCK_SIZE_KV,
+        num_warps=num_warps,
+        num_ctas=num_ctas,
+        num_stages=num_stages
     )
 
     return O
