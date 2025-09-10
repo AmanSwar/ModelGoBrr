@@ -7,6 +7,32 @@ from kernels.gqa import GQA_Triton
 from kernels.fusedffn import ffn_silu_fwd_triton
 from kernels.rmsnorm import RMSNormTriton
 
+
+class FFN(nn.Module):
+
+    def __init__(self, in_dim: int, hidden_dim: int):
+        super().__init__()
+
+        self.linear_layer1 = nn.Linear(
+            in_features=in_dim, out_features=hidden_dim, bias=False
+        )
+        self.linear_layerP = nn.Linear(
+            in_features=in_dim, out_features=hidden_dim, bias=False
+        )
+        self.silu = nn.SiLU()
+        self.linear_layer2 = nn.Linear(
+            in_features=hidden_dim, out_features=in_dim, bias=False
+        )
+
+    def forward(self, x):
+        x_l = self.linear_layer1(x)
+        x_p = self.linear_layerP(x)
+        x = self.silu(x_l)
+        x = x * x_p
+        x = self.linear_layer2(x)
+        return x
+
+
 def compute_rope_params(head_dim, theta_base, context_length, dtype=torch.float32):
     assert head_dim % 2 == 0, "head dim must be divisible by 2"
 
@@ -80,10 +106,10 @@ class Transformer(nn.Module):
             dtype=cfg.dtype,
         )
 
-        self.rms_norm1 = RMSNormTriton(cfg.embed_dim, eps=1e-6)
-        self.rms_norm2 = RMSNormTriton(cfg.embed_dim, eps=1e-6)
+        self.rms_norm1 = nn.RMSNorm(cfg.embed_dim, eps=1e-6)
+        self.rms_norm2 = nn.RMSNorm(cfg.embed_dim, eps=1e-6)
 
-        self.ffn = FusedFFNSilu(cfg.embed_dim, cfg.hidden_dim , cfg.dtype , device=device)
+        self.ffn = FFN(cfg.embed_dim, cfg.hidden_dim)
 
     def forward(self, x, cos, sin):
         x_res = x
@@ -96,7 +122,7 @@ class Transformer(nn.Module):
         x_res = x
         x = self.rms_norm2(x)
         # print("check3")
-        
+
         x = self.ffn(x)
         # print("check4")
         x = x + x_res
@@ -116,7 +142,7 @@ class FastQwen3(nn.Module):
             [Transformer(cfg=cfg , device=device) for _ in range(cfg.n_layers)]
         )
 
-        self.final_rmsnorm = RMSNormTriton(cfg.embed_dim)
+        self.final_rmsnorm = nn.RMSNorm(cfg.embed_dim)
 
         self.out_head = nn.Linear(
             cfg.embed_dim, cfg.vocab_size, bias=False, dtype=cfg.dtype
@@ -173,7 +199,7 @@ if __name__ == "__main__":
     model : FastQwen3 = FastQwen3(config ,device=device)
 
     weights_dict = load_file(single_file_path)
-    load_weights_fastqwen(model, config, weights_dict)
+    # load_weights_fastqwen(model, config, weights_dict)
 
     model = model.to(device=device)
     print("model loaded")
@@ -201,7 +227,7 @@ if __name__ == "__main__":
         for _ in range(max_new_tokens):
             with torch.no_grad():
                 logits = model(tokens)
-                print(f"pass {_}")
+                # print(f"pass {_}")
 
             next_token = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(0)
             tokens = torch.cat((tokens, next_token), dim=1)
@@ -209,6 +235,28 @@ if __name__ == "__main__":
         print(f"End time {et}")
         decoded = tokenizer.decode(tokens.squeeze(0).tolist())
         return decoded
-    print("Start generating")
-    out = generate(model, tokenizer, PROMPT, max_new_tokens=128)
-    print(out)
+
+
+    def benchmark_generation(
+        model, tokenizer, prompt=PROMPT, warmup=1, iters=5, max_new_tokens=20
+    ):
+        print("Warming up...")
+        for _ in range(warmup):
+            _ = generate(model, tokenizer, prompt, max_new_tokens=32)
+
+        t0 = time.monotonic()
+        outputs = []
+        for i in range(iters):
+            s = time.monotonic()
+            out = generate(model, tokenizer, prompt, max_new_tokens=max_new_tokens)
+            e = time.monotonic()
+            latency = e - s
+
+            in_len = len(tokenizer.encode(prompt))
+            gen_len = len(tokenizer.encode(out)) - in_len
+
+            print(f"iter {i+1:2d}: latency={latency:.3f}s, tokens/s={gen_len/latency:.2f}")
+            outputs.append((latency, out))
+            
+    print("Start benchmarking")
+    benchmark_generation(model , tokenizer)
