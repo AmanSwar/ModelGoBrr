@@ -51,11 +51,12 @@ class CLIPLayer(nn.Module):
         self.linear2 = nn.Linear(4 * n_embed , n_embed)
 
     def forward(self , x):
-        x1 = self.layernorm1(x)
+        residue = x
+        x = self.layernorm1(x)
 
-        x2 = self.attn(x)
+        x = self.attn(x)
 
-        x = x1 + x2
+        x += residue
 
         residue = x
 
