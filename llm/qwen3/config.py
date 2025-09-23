@@ -28,4 +28,4 @@ class QwenConfig_float16:
     hidden_dim: int = 3072
     qk_norm: bool = True
     rope_base: float = 1e6
-    dtype: torch.dtype = torch.bfloat16
+    dtype: torch.dtype = torch.float16
