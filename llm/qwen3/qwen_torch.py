@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from llm.qwen3.config import QwenConfig
+from llm.qwen3.config import QwenConfig_bfloat16
 
 
 def compute_rope_params(
@@ -147,7 +147,7 @@ class Transformer(nn.Module):
 
     def __init__(
         self,
-        cfg : QwenConfig
+        cfg : QwenConfig_bfloat16
     ):
         super().__init__()
 
@@ -185,8 +185,8 @@ class Transformer(nn.Module):
 
 
 class Qwen3(nn.Module):
-    
-    def __init__(self , cfg : QwenConfig):
+
+    def __init__(self, cfg: QwenConfig_bfloat16):
 
         super().__init__()
 
@@ -197,7 +197,7 @@ class Qwen3(nn.Module):
         )
 
         self.final_rmsnorm = nn.RMSNorm(cfg.embed_dim)
-        
+
         self.out_head = nn.Linear(cfg.embed_dim , cfg.vocab_size , bias=False , dtype=cfg.dtype)
 
         if cfg.head_dim is None:
@@ -240,18 +240,18 @@ if __name__ == "__main__":
 
     from llm.qwen3.qwen_token import Qwen3Tokenizer
     import time
-    from llm.qwen3.load import load_weights_qwen
+    # from llm.qwen3.load import load_weights_qwen
     import os
-    from llm.qwen3.hf_load import load_file
+    # from llm.qwen3.hf_load import load_file
     repo_dir = "/home/aman/code/model_go_brr/Qwen3-0.6B"
     torch.manual_seed(696969)
     device = torch.device("cuda")
     single_file_path = os.path.join(repo_dir, "model.safetensors")
 
-    weights_dict = load_file(single_file_path)
-    config = QwenConfig()
+    # weights_dict = load_file(single_file_path)
+    config = QwenConfig_bfloat16()
     model = Qwen3(config).to(device)
-    load_weights_qwen(model , config , weights_dict)
+    # load_weights_qwen(model , config , weights_dict)
     tokenizer_file_path = "/home/aman/code/model_go_brr/Qwen3-0.6B/tokenizer.json"
 
     tokenizer = Qwen3Tokenizer(
