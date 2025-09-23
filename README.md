@@ -2,26 +2,29 @@
 
 This repository is a collection of experiments and implementations of custom Triton kernels for accelerating large language models. It's a personal project driven by a passion for making models run as fast as possible. This is not intended to be a production-ready library, but rather a playground for exploring performance optimizations in the world of deep learning.
 
+## Model
+
+Currently optimized Qwen3 0.6B parameter model using fused cuda kernels and KV Cache
+![fastqwen3 perf analysis](assets/fastqwen3_perfanal.png)
+![fastqwen3 scaling](assets/fastqwen3_scaling.png)
+
+
 ## Implemented Kernels
 
-This repository contains custom Triton kernels for the following operations:
-
+This repository contains custom Triton and CUDA kernels for the following operations:
+#### TRITON
 *   **Grouped-Query Attention (GQA):** An optimized GQA implementation that leverages Triton to fuse operations and reduce memory bandwidth.
 *   **Fused Feed-Forward Network (FFN) with SiLU:** A fused FFN that combines the linear transformations and SiLU activation into a single kernel, reducing kernel launch overhead and improving data locality.
 *   **RMS Normalization:** A custom Triton implementation of RMS Normalization for improved performance over the standard PyTorch version.
 *   **Flash Attention:** A Triton implementation of the Flash Attention algorithm for efficient attention computation.
 *   **Fused Linear:** A fused linear layer implementation.
 
-## Model
+#### CUDA
+* **RMS Norm**
+* **RoPE**
+* **Flash attention**
 
-The primary model used for testing and benchmarking in this repository is **Qwen3-0.6B** (MORE MODEL COMING SOON ....). The `llm/qwen3` directory contains the model definition, loading code, and inference scripts. There are two versions of the model implementation:
-
-*   `qwen_torch.py`: A baseline implementation using standard PyTorch modules.
-*   `qwen_fast.py`: An optimized implementation that uses the custom Triton kernels.
-
-## Benchmarking
-
-The repository includes benchmarking scripts to compare the performance of the custom Triton kernels against the baseline PyTorch implementations. You can find these scripts in the `kernels` directory and in the main execution blocks of the model files.
+>**More comming soon**
 
 ## Getting Started
 
