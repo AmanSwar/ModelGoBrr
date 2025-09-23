@@ -88,7 +88,6 @@ class GQA_Triton(nn.Module):
         self, x, cos, sin
     ): 
         bs, seq_len, _ = x.shape
-        x = x.to(torch.float16)
         Q: torch.Tensor = self.Wq(x)
         K: torch.Tensor = self.Wk(x)
         V: torch.Tensor = self.Wv(x)

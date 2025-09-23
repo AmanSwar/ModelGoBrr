@@ -23,22 +23,22 @@ def _attn_fwd_inner(
 ):
     # range of values handled by this stage
     if STAGE == 1:
-        # From 0 to the left of the diagonal
+        # From 0 to the current q position
         lo, hi = 0, block_index_q * BLOCK_SIZE_Q
     elif STAGE == 2:
-        # Used only for the block in which there is transition between non-masked and masked keys
         lo, hi = block_index_q * BLOCK_SIZE_Q, (block_index_q + 1) * BLOCK_SIZE_Q
         lo = tl.multiple_of(lo, BLOCK_SIZE_Q)
     else:
         # Only used for non-causal attention
         lo, hi = 0, SEQ_LEN
 
+    
     K_block_ptr = tl.advance(K_block_ptr, (0, lo))
     V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
 
     # loop over k, v and update accumulator
     for start_kv in range(lo, hi, BLOCK_SIZE_KV):
-        # Just let the compiler know that start_n is a multiple of BLOCK_N, so the compiler can do optimizations
+        # let the compiler know that start_kv is a multiple of block_size_kv so that compiler can do optimization -> according to official triton docs
         start_kv = tl.multiple_of(start_kv, BLOCK_SIZE_KV)
 
         # -- compute qk ----
@@ -121,7 +121,7 @@ def _attn_fwd(
     stride_V_batch,
     stride_V_head,
     stride_V_seq,
-    stride_V_dim,
+    stride_V_dim,d
     stride_O_batch,
     stride_O_head,
     stride_O_seq,
@@ -136,30 +136,33 @@ def _attn_fwd(
 ):
     tl.static_assert(BLOCK_SIZE_KV <= HEAD_DIM)
 
-    # This indicate which block in the sequence length to process
+    #pid along the seq len dimension
     block_index_q = tl.program_id(0)
 
-    # This indicates which head and batch to process. Each program is associated with a single head of a single batch
+    #pid for batch_dim * n_heads [[[head1] , [head2] ..] ... ]
     index_batch_head = tl.program_id(1)
-    # This indicate which batch this program is associated with (each batch has NUM_HEADS heads)
+    
+    #which batch am I in
     index_batch = index_batch_head // NUM_HEADS
-    # This indicate the position of the head in the batch
+    # which head am I in
     index_head = index_batch_head % NUM_HEADS
 
-    # This allows to get the (N_CTX, HEAD_DIM) block in the Q, K, V by selecting indexing it by batch and head
+    #offset to reach the particular qkv value from batch and head
     qvk_offset = (
         index_batch.to(tl.int64) * stride_Q_batch
         + index_head.to(tl.int64) * stride_Q_head
     )
 
+
     Q_block_ptr = tl.make_block_ptr(
-        base=Q + qvk_offset,
-        shape=(SEQ_LEN, HEAD_DIM),
-        strides=(stride_Q_seq, stride_Q_dim),
-        offsets=(block_index_q * BLOCK_SIZE_Q, 0),
-        block_shape=(BLOCK_SIZE_Q, HEAD_DIM),
-        order=(1, 0),
+        base=Q + qvk_offset, #where the block starts
+        shape=(SEQ_LEN, HEAD_DIM), #shape of the block
+        strides=(stride_Q_seq, stride_Q_dim), #strides of the block
+        offsets=(block_index_q * BLOCK_SIZE_Q, 0), # starting offset of the block
+        block_shape=(BLOCK_SIZE_Q, HEAD_DIM), #shape of block 
+        order=(1, 0), #column major mem order -> why ? because we traverse along the head_dim which is columns
     )
+
 
     V_block_ptr = tl.make_block_ptr(
         base=V + qvk_offset,
@@ -172,14 +175,11 @@ def _attn_fwd(
 
     K_block_ptr = tl.make_block_ptr(
         base=K + qvk_offset,
-        shape=(HEAD_DIM, SEQ_LEN),
-        strides=(
-            stride_K_dim,
-            stride_K_seq,
-        ),  # We invert the strides w.r.t Q, so we transpose the matrix
+        shape=(HEAD_DIM, SEQ_LEN), #transpose the matrix (head_dim , seq_len)
+        strides=(stride_K_dim,stride_K_seq,),  
         offsets=(0, 0),
         block_shape=(HEAD_DIM, BLOCK_SIZE_KV),
-        order=(0, 1),
+        order=(0, 1), #row major as we are traversing along the row axis
     )
 
     O_block_ptr = tl.make_block_ptr(
@@ -191,25 +191,24 @@ def _attn_fwd(
         order=(1, 0),
     )
 
-    # offs_q: the offsets for the tokens in the Q to process
     offs_q = block_index_q * BLOCK_SIZE_Q + tl.arange(0, BLOCK_SIZE_Q)
-    # offs_kv: the offsets for the tokens in the K and V sequence to process
     offs_kv = tl.arange(0, BLOCK_SIZE_KV)
 
-    # m_i: the running maximum. We have one for each query
+    #running maxium (total size -> block_size_q as each row will have one)
     m_i = tl.zeros([BLOCK_SIZE_Q], dtype=tl.float32) - float("inf")
-    # l_i: the running sum. We have one for each query (as we sum the attention scores by rows)
+
+    #running sum for each row
     l_i = tl.zeros([BLOCK_SIZE_Q], dtype=tl.float32) + 1.0
-    # acc: the accumulator for the output, which is a group of rows of the O matrix
+
+    #output acc
     O_block = tl.zeros([BLOCK_SIZE_Q, HEAD_DIM], dtype=tl.float32)
 
-    # load the blocks of Q: it will stay in SRAM throughout
+    #load the O block so that it can be in SRAM hence writing speed would be high
     Q_block = tl.load(Q_block_ptr)
 
-    # Stage: 3 if causal, else 1
-
+    #Stage 3 -> casual
     if STAGE == 1 or STAGE == 3:
-        # This step runs for non-causal attention or for the blocks to the left of the diagonal in the causal attention
+        #attn for diagonal 
         O_block, l_i, m_i = _attn_fwd_inner(
             O_block,
             l_i,
